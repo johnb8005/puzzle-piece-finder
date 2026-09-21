@@ -19,7 +19,7 @@ a {
 }
 
 .wrap {
-  max-width: 720px;
+  max-width: 860px;
   margin: 0 auto;
   padding: 28px 16px 56px;
 }
@@ -55,6 +55,36 @@ a {
 
 .nav a.quiet:hover {
   color: var(--pf-paper);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 32px;
+  align-items: center;
+}
+
+.demo {
+  margin: 0;
+  justify-self: end;
+  width: 250px;
+}
+
+.demo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 22px;
+  border: 6px solid var(--pf-ink);
+  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.35);
+  background: var(--pf-felt);
+}
+
+.demo figcaption {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--pf-dim);
+  text-align: center;
 }
 
 .hero h1 {
@@ -187,7 +217,15 @@ footer {
   color: var(--pf-dim);
 }
 
-@media (max-width: 600px) {
+@media (max-width: 700px) {
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 36px;
+  }
+  .demo {
+    justify-self: center;
+    width: min(250px, 70vw);
+  }
   .steps {
     grid-template-columns: 1fr;
   }

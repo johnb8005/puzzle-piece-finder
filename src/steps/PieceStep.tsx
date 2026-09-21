@@ -54,7 +54,7 @@ export function PieceStep(p: Props) {
       )}
 
       <div>
-        <div className="flex justify-between" style={label}>
+        <div className="flex justify-between" style={{ ...label, display: "flex" }}>
           <span>Keep more</span>
           <span>Cut more away</span>
         </div>

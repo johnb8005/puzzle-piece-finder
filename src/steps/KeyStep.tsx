@@ -1,4 +1,4 @@
-import { Check, RotateCcw } from "lucide-react";
+import { Check, FolderOpen, RotateCcw } from "lucide-react";
 import { CropBox } from "../components/CropBox";
 import { PhotoButtons } from "../components/PhotoButtons";
 import { clamp } from "../lib/canvas";
@@ -11,6 +11,8 @@ const PRESETS = [100, 300, 500, 1000];
 interface Props {
   rawKeyUrl: string;
   hasSavedKey: boolean;
+  /** Number of puzzles saved in this browser; offers the library when > 0. */
+  savedCount: number;
   crop: Crop;
   setCrop: (c: Crop) => void;
   /** The grid currently shown: manual override if set, otherwise derived from the count. */
@@ -23,6 +25,7 @@ interface Props {
   onSave: () => void;
   onRetake: () => void;
   onKeepCurrent: () => void;
+  onOpenLibrary: () => void;
 }
 
 /** Step 1: photograph the box art, crop it and set the piece grid. */
@@ -37,6 +40,11 @@ export function KeyStep(p: Props) {
         {p.hasSavedKey && (
           <button className="pf-btn" style={quietBtn} onClick={p.onKeepCurrent}>
             Keep the current key
+          </button>
+        )}
+        {p.savedCount > 0 && (
+          <button className="pf-btn" style={quietBtn} onClick={p.onOpenLibrary}>
+            <FolderOpen size={18} /> Open a saved puzzle ({p.savedCount})
           </button>
         )}
       </section>

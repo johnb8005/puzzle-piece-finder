@@ -37,8 +37,8 @@ export function resizeCanvas(src: HTMLCanvasElement, w: number, h: number): HTML
   return out;
 }
 
-/** Decode a photo into a canvas no larger than `maxSide` on its long edge. */
-export async function fileToCanvas(file: File, maxSide: number): Promise<HTMLCanvasElement> {
+/** Decode a photo (File or stored Blob) into a canvas no larger than `maxSide` on its long edge. */
+export async function fileToCanvas(file: Blob, maxSide: number): Promise<HTMLCanvasElement> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -54,4 +54,17 @@ export async function fileToCanvas(file: File, maxSide: number): Promise<HTMLCan
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** Encode a canvas as a Blob for storage. */
+export function canvasToBlob(c: HTMLCanvasElement, type = "image/jpeg", quality = 0.85): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    c.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode the image."))), type, quality);
+  });
+}
+
+/** A small JPEG data URL of a canvas, for thumbnails. */
+export function thumbnail(c: HTMLCanvasElement, maxSide = 160): string {
+  const s = Math.min(1, maxSide / Math.max(c.width, c.height));
+  return resizeCanvas(c, c.width * s, c.height * s).toDataURL("image/jpeg", 0.7);
 }

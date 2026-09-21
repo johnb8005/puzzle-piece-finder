@@ -6,6 +6,8 @@ Runs entirely in the browser: no server, no account, no uploads.
 **Live site:** https://johnb8005.github.io/puzzle-piece-finder/
 **App:** https://johnb8005.github.io/puzzle-piece-finder/app/
 
+<p align="center"><img src="public/demo.gif" width="300" alt="Animated walkthrough: photograph the box art, photograph a piece, and the app marks the row and column on the picture." /></p>
+
 ## How to use it
 
 1. **Key.** Photograph the finished picture on the box lid, hold the phone flat to avoid skew.
@@ -15,6 +17,10 @@ Runs entirely in the browser: no server, no account, no uploads.
    The app cuts the piece out from the background. A slider adjusts the cut-off.
 3. **Place.** The app marks the spot on the key, shows a close-up, shows the piece turned the
    way it sits, and lists up to three candidate spots with a confidence verdict.
+
+Everything is saved in the browser as you go. Close the tab and reopen the app and you are back
+where you were, with the key, the grid, the last piece and its result. The **Puzzles** button lists
+every saved puzzle so you can switch between them or delete one.
 
 ## How it works
 
@@ -27,6 +33,7 @@ All image processing is plain canvas pixel work in [`src/lib`](src/lib):
 | `grid.ts` | Derives pieces across / down from the piece count and the key's aspect ratio, and maps a match to a row and column. |
 | `verdict.ts` | Turns the top scores into "Strong match", "Likely match" or "Several spots look alike". |
 | `canvas.ts`, `stats.ts`, `draw.ts` | Canvas helpers, DOM-free numerics (median, Otsu) and the result-view drawing. |
+| `session.ts`, `db.ts` | The saved-session model and its IndexedDB store. Photos are stored as JPEG Blobs; the id of the open session is in localStorage. Storage failures are swallowed so the app still works in private windows. |
 
 The UI is React with a small set of components in `src/components` and one view per step in `src/steps`.
 
@@ -42,11 +49,23 @@ bun test           # unit tests for the pure modules
 bun run build      # production build to dist/
 bun run preview    # serve dist/
 bun run check      # typecheck + test + build, same as CI
+bun run demo:gif   # re-record public/demo.gif (see below)
 ```
 
 The camera button uses `capture="environment"`, which browsers only honour over HTTPS or on
 localhost. To try it on a phone during development, use a tunnel or the "Choose from photos"
 button instead.
+
+### Re-recording the demo GIF
+
+`scripts/record-demo.ts` draws a synthetic box-art scene and a jigsaw-shaped piece, runs the
+built app through all three steps in headless Chromium and encodes the frames to
+`public/demo.gif`. It needs a production build and a Chromium that playwright-core can find:
+
+```sh
+bunx playwright install chromium   # once; or set CHROMIUM_PATH to an existing binary
+bun run build && bun run demo:gif
+```
 
 ## Project layout
 
@@ -58,11 +77,12 @@ src/
   App.tsx             state and step orchestration
   theme.ts            palette, font and shared inline styles
   types.ts            Step and Crop types
-  components/         Note, PhotoButtons, StepTabs, CropBox
+  components/         Note, PhotoButtons, StepTabs, CropBox, Library
   steps/              KeyStep, PieceStep, ResultStep
   lib/                image processing (see above) and unit tests
   styles/             theme tokens, app CSS (Tailwind) and landing CSS
-public/favicon.svg
+public/               favicon and the demo GIF
+scripts/              demo GIF recorder
 .github/workflows/    CI and GitHub Pages deployment
 ```
 
