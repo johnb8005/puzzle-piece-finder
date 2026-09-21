@@ -6,6 +6,8 @@ Runs entirely in the browser: no server, no account, no uploads.
 **Live site:** https://johnb8005.github.io/puzzle-piece-finder/
 **App:** https://johnb8005.github.io/puzzle-piece-finder/app/
 
+<p align="center"><img src="public/demo.gif" width="300" alt="Animated walkthrough: photograph the box art, photograph a piece, and the app marks the row and column on the picture." /></p>
+
 ## How to use it
 
 1. **Key.** Photograph the finished picture on the box lid, hold the phone flat to avoid skew.
@@ -42,11 +44,23 @@ bun test           # unit tests for the pure modules
 bun run build      # production build to dist/
 bun run preview    # serve dist/
 bun run check      # typecheck + test + build, same as CI
+bun run demo:gif   # re-record public/demo.gif (see below)
 ```
 
 The camera button uses `capture="environment"`, which browsers only honour over HTTPS or on
 localhost. To try it on a phone during development, use a tunnel or the "Choose from photos"
 button instead.
+
+### Re-recording the demo GIF
+
+`scripts/record-demo.ts` draws a synthetic box-art scene and a jigsaw-shaped piece, runs the
+built app through all three steps in headless Chromium and encodes the frames to
+`public/demo.gif`. It needs a production build and a Chromium that playwright-core can find:
+
+```sh
+bunx playwright install chromium   # once; or set CHROMIUM_PATH to an existing binary
+bun run build && bun run demo:gif
+```
 
 ## Project layout
 
@@ -62,7 +76,8 @@ src/
   steps/              KeyStep, PieceStep, ResultStep
   lib/                image processing (see above) and unit tests
   styles/             theme tokens, app CSS (Tailwind) and landing CSS
-public/favicon.svg
+public/               favicon and the demo GIF
+scripts/              demo GIF recorder
 .github/workflows/    CI and GitHub Pages deployment
 ```
 
