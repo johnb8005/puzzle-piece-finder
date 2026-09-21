@@ -18,6 +18,10 @@ Runs entirely in the browser: no server, no account, no uploads.
 3. **Place.** The app marks the spot on the key, shows a close-up, shows the piece turned the
    way it sits, and lists up to three candidate spots with a confidence verdict.
 
+Everything is saved in the browser as you go. Close the tab and reopen the app and you are back
+where you were, with the key, the grid, the last piece and its result. The **Puzzles** button lists
+every saved puzzle so you can switch between them or delete one.
+
 ## How it works
 
 All image processing is plain canvas pixel work in [`src/lib`](src/lib):
@@ -29,6 +33,7 @@ All image processing is plain canvas pixel work in [`src/lib`](src/lib):
 | `grid.ts` | Derives pieces across / down from the piece count and the key's aspect ratio, and maps a match to a row and column. |
 | `verdict.ts` | Turns the top scores into "Strong match", "Likely match" or "Several spots look alike". |
 | `canvas.ts`, `stats.ts`, `draw.ts` | Canvas helpers, DOM-free numerics (median, Otsu) and the result-view drawing. |
+| `session.ts`, `db.ts` | The saved-session model and its IndexedDB store. Photos are stored as JPEG Blobs; the id of the open session is in localStorage. Storage failures are swallowed so the app still works in private windows. |
 
 The UI is React with a small set of components in `src/components` and one view per step in `src/steps`.
 
@@ -72,7 +77,7 @@ src/
   App.tsx             state and step orchestration
   theme.ts            palette, font and shared inline styles
   types.ts            Step and Crop types
-  components/         Note, PhotoButtons, StepTabs, CropBox
+  components/         Note, PhotoButtons, StepTabs, CropBox, Library
   steps/              KeyStep, PieceStep, ResultStep
   lib/                image processing (see above) and unit tests
   styles/             theme tokens, app CSS (Tailwind) and landing CSS
