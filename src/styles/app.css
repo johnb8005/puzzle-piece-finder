@@ -1,0 +1,33 @@
+@import "tailwindcss";
+@import "./theme.css";
+
+html,
+body {
+  margin: 0;
+  background: var(--pf-felt);
+  color: var(--pf-paper);
+  font-family: var(--pf-font);
+}
+
+.pf-btn:focus-visible,
+.pf-in:focus-visible {
+  outline: 3px solid var(--pf-mark);
+  outline-offset: 2px;
+}
+
+@keyframes pf-ring {
+  0% { box-shadow: 0 0 0 0 rgba(255, 210, 63, 0.9); }
+  100% { box-shadow: 0 0 0 26px rgba(255, 210, 63, 0); }
+}
+
+.pf-ring {
+  animation: pf-ring 1.4s ease-out 3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-ring { animation: none; }
+}
+
+input[type="range"].pf-in {
+  accent-color: var(--pf-mark);
+}

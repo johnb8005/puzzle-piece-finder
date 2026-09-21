@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1F3B33" />
+    <meta name="description" content="Photograph a jigsaw piece and find where it goes on the box art. Free, no sign-up, and your photos never leave your phone." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/styles/landing.css" />
+    <title>Puzzle Piece Finder</title>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav class="nav">
+        <a class="brand" href="./"><img src="/favicon.svg" alt="" /> Puzzle Piece Finder</a>
+        <a class="quiet" href="https://github.com/johnb8005/puzzle-piece-finder">Source on GitHub</a>
+      </nav>
+
+      <section class="hero">
+        <h1>Where does <em>this piece</em> go?</h1>
+        <p>
+          Photograph the box art, then photograph a piece. The finder searches the whole picture and tells you the row, the column
+          and which way to turn it.
+        </p>
+        <a class="cta" href="app/">Open the finder →</a>
+        <span class="fine">Works in the browser on your phone. Nothing is uploaded.</span>
+      </section>
+
+      <ol class="steps">
+        <li>
+          <span class="n">1</span>
+          <h2>Key</h2>
+          <p>Photograph the finished picture on the box lid and crop it to the edges. Enter the piece count.</p>
+        </li>
+        <li>
+          <span class="n">2</span>
+          <h2>Piece</h2>
+          <p>Lay a piece on plain paper and photograph it. The app cuts it out from the background for you.</p>
+        </li>
+        <li>
+          <span class="n">3</span>
+          <h2>Place</h2>
+          <p>See the spot marked on the key, a close-up, and the piece turned the way it sits. Runner-up spots too.</p>
+        </li>
+      </ol>
+
+      <section class="how">
+        <h2>How it works</h2>
+        <p>Everything runs on your device with plain canvas pixels. There is no server, no account and no model download.</p>
+        <ul>
+          <li><strong>Cut-out.</strong> The background colour is read from the photo's frame, the piece is separated with an Otsu threshold, holes are filled and the bevelled rim is shaved off.</li>
+          <li><strong>Straighten.</strong> The straight sides of a piece dominate its outline's edge directions, so the peak of that histogram gives the tilt to undo.</li>
+          <li><strong>Search.</strong> The piece is slid over a small copy of the key at every position, in four turns and three sizes, scored by zero-mean colour correlation with a penalty for colour drift.</li>
+          <li><strong>Refine.</strong> The strongest peaks are re-scored on a finer copy of the key, then the top three distinct spots are shown with a confidence verdict.</li>
+        </ul>
+      </section>
+
+      <footer>
+        Tips: hold the phone flat above the box to avoid skew, avoid glare, and photograph pieces on paper that contrasts with their colours.
+        Pieces of plain sky or water will match many places, which the app tells you.
+      </footer>
+    </div>
+  </body>
+</html>
