@@ -1,0 +1,12 @@
+/* Shared design tokens for the landing page and the app. Mirrors src/theme.ts. */
+:root {
+  --pf-felt: #1f3b33;
+  --pf-felt-deep: #162b25;
+  --pf-chip: #8fa3a8;
+  --pf-paper: #f3f5f1;
+  --pf-ink: #12211d;
+  --pf-mark: #ffd23f;
+  --pf-line: rgba(243, 245, 241, 0.18);
+  --pf-dim: rgba(243, 245, 241, 0.68);
+  --pf-font: "Avenir Next", "Nunito Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
