@@ -89,7 +89,8 @@ export function BatchStep(p: Props) {
         !p.boardUrl ? (
           <>
             <p style={hint}>
-              Optional. Photograph the partly finished puzzle from straight above and the pieces will be marked on it, and spots that already look filled are ruled out.
+              Strongly recommended. Photograph the partly finished puzzle from straight above: the pieces are marked on it, and every spot that is already
+              filled is ruled out, which is what makes placing many pieces reliable. Without it, only pieces with clear detail can be placed.
             </p>
             <PhotoButtons onFile={p.onLoadBoard} cameraLabel="Photograph the puzzle" />
           </>

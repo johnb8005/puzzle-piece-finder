@@ -37,6 +37,8 @@ export interface SegmentOptions {
   maxPieces?: number;
   /** Blobs smaller than this fraction of the largest blob are ignored as dust or shadow. */
   minRelSize?: number;
+  /** Receives diagnostics about the thresholding and blob selection. */
+  debug?: (info: Record<string, unknown>) => void;
 }
 
 const SINGLE_WORK_SIZE = 360;
@@ -52,8 +54,10 @@ function frameIndices(W: number, H: number): number[] {
   return out;
 }
 
-/** Median colour of the photo's outer frame, taken as the background. */
-function backgroundColour(d: Uint8ClampedArray, frame: number[]): [number, number, number] {
+type RGB = [number, number, number];
+
+/** Median colour of the photo's outer frame. */
+function frameColour(d: Uint8ClampedArray, frame: number[]): RGB {
   const r: number[] = [];
   const g: number[] = [];
   const b: number[] = [];
@@ -63,6 +67,55 @@ function backgroundColour(d: Uint8ClampedArray, frame: number[]): [number, numbe
     b.push(d[i * 4 + 2]);
   }
   return [median(r), median(g), median(b)];
+}
+
+/** Median colour of a sample of one blob's pixels. */
+function blobColour(d: Uint8ClampedArray, label: Int32Array, id: number, N: number): RGB {
+  const r: number[] = [];
+  const g: number[] = [];
+  const b: number[] = [];
+  const step = Math.max(1, Math.floor(N / 50_000));
+  for (let i = 0; i < N; i += step)
+    if (label[i] === id) {
+      r.push(d[i * 4]);
+      g.push(d[i * 4 + 1]);
+      b.push(d[i * 4 + 2]);
+    }
+  return r.length ? [median(r), median(g), median(b)] : [0, 0, 0];
+}
+
+/**
+ * Local roughness of the luminance, in colour-distance units: how much each
+ * pixel deviates from its 5x5 neighbourhood mean, smoothed over 5x5 and with
+ * JPEG-level noise subtracted. Plain paper scores ~0; print texture scores high.
+ */
+function roughness(d: Uint8ClampedArray, W: number, H: number): Float32Array {
+  const N = W * H;
+  const L = new Float32Array(N);
+  for (let i = 0; i < N; i++) L[i] = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+  const box5 = (src: Float32Array): Float32Array => {
+    const tmp = new Float32Array(N);
+    const out = new Float32Array(N);
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let s = 0;
+        for (let k = -2; k <= 2; k++) s += src[y * W + Math.min(W - 1, Math.max(0, x + k))];
+        tmp[y * W + x] = s / 5;
+      }
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        let s = 0;
+        for (let k = -2; k <= 2; k++) s += tmp[Math.min(H - 1, Math.max(0, y + k)) * W + x];
+        out[y * W + x] = s / 5;
+      }
+    return out;
+  };
+  const mean = box5(L);
+  const dev = new Float32Array(N);
+  for (let i = 0; i < N; i++) dev[i] = Math.abs(L[i] - mean[i]);
+  const out = box5(dev);
+  for (let i = 0; i < N; i++) out[i] = Math.max(0, out[i] - 3) * 8;
+  return out;
 }
 
 /**
@@ -85,22 +138,35 @@ function isShadow(r: number, g: number, b: number, mr: number, mg: number, mb: n
  * chopping off its pale parts, so it is capped by how much the background
  * itself varies: anything well outside the frame's own spread is not paper.
  */
-function pieceThreshold(hist: Uint32Array, N: number, frameDist: Float32Array, cutoff: number): number {
-  const sorted = Float32Array.from(frameDist).sort();
-  const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
+function pieceThreshold(hist: Uint32Array, N: number, cutoff: number): number {
+  // Spread of the background itself: the 95th percentile of the distances of
+  // pixels that are plainly background (close to its colour).
+  const near = 40;
+  let total = 0;
+  for (let v = 0; v < near; v++) total += hist[v];
+  let acc = 0;
+  let p95 = 0;
+  for (let v = 0; v < near; v++) {
+    acc += hist[v];
+    if (acc >= total * 0.95) { p95 = v; break; }
+  }
   const fromBackground = p95 * 1.6 + 10;
   return Math.max(12, Math.min(otsu(hist, N), fromBackground) * cutoff);
 }
 
-/** Label 4-connected blobs above `thr`. Returns the label map and each label's pixel count (index 0 unused). */
-function labelBlobs(dist: Float32Array, W: number, H: number, thr: number): { label: Int32Array; sizes: number[] } {
+interface BlobBox { x0: number; y0: number; x1: number; y1: number }
+
+/** Label 4-connected blobs above `thr`. Returns the label map and each label's pixel count and bounds (index 0 unused). */
+function labelBlobs(dist: Float32Array, W: number, H: number, thr: number): { label: Int32Array; sizes: number[]; boxes: BlobBox[] } {
   const N = W * H;
   const label = new Int32Array(N);
   const stack = new Int32Array(N);
   const sizes: number[] = [0];
+  const boxes: BlobBox[] = [{ x0: 0, y0: 0, x1: 0, y1: 0 }];
   for (let i0 = 0; i0 < N; i0++) {
     if (label[i0] || dist[i0] <= thr) continue;
     const id = sizes.length;
+    const box: BlobBox = { x0: W, y0: H, x1: 0, y1: 0 };
     let sp = 0;
     let size = 0;
     stack[sp++] = i0;
@@ -109,14 +175,20 @@ function labelBlobs(dist: Float32Array, W: number, H: number, thr: number): { la
       const i = stack[--sp];
       size++;
       const x = i % W;
+      const y = (i / W) | 0;
+      if (x < box.x0) box.x0 = x;
+      if (x > box.x1) box.x1 = x;
+      if (y < box.y0) box.y0 = y;
+      if (y > box.y1) box.y1 = y;
       if (x > 0 && !label[i - 1] && dist[i - 1] > thr) { label[i - 1] = id; stack[sp++] = i - 1; }
       if (x < W - 1 && !label[i + 1] && dist[i + 1] > thr) { label[i + 1] = id; stack[sp++] = i + 1; }
       if (i >= W && !label[i - W] && dist[i - W] > thr) { label[i - W] = id; stack[sp++] = i - W; }
       if (i < N - W && !label[i + W] && dist[i + W] > thr) { label[i + W] = id; stack[sp++] = i + W; }
     }
     sizes.push(size);
+    boxes.push(box);
   }
-  return { label, sizes };
+  return { label, sizes, boxes };
 }
 
 interface Mask {
@@ -304,33 +376,70 @@ export function segmentPieces(src: HTMLCanvasElement, cutoff: number, straighten
   const N = W * H;
   const d = ctx2d(small).getImageData(0, 0, W, H).data;
 
-  const frame = frameIndices(W, H);
-  const [mr, mg, mb] = backgroundColour(d, frame);
-  const dist = new Float32Array(N);
-  const hist = new Uint32Array(256);
-  for (let i = 0; i < N; i++) {
-    const r = d[i * 4];
-    const g = d[i * 4 + 1];
-    const b = d[i * 4 + 2];
-    const dr = r - mr;
-    const dg = g - mg;
-    const db = b - mb;
-    const v = isShadow(r, g, b, mr, mg, mb) ? 0 : Math.min(255, Math.sqrt(dr * dr + dg * dg + db * db));
-    dist[i] = v;
-    hist[v | 0]++;
-  }
-  const thr = pieceThreshold(hist, N, Float32Array.from(frame, (i) => dist[i]), cutoff);
+  const spansFrame = (b: BlobBox) => b.x1 - b.x0 + 1 > W * 0.6 || b.y1 - b.y0 + 1 > H * 0.6;
 
-  const { label, sizes } = labelBlobs(dist, W, H, thr);
-  const largest = Math.max(0, ...sizes);
-  if (!largest) return [];
-  const minSize = Math.max(largest * minRelSize, N * 0.0005);
-  const ids = sizes
-    .map((size, id) => ({ size, id }))
-    .filter(({ size, id }) => id > 0 && size >= minSize)
-    .sort((a, b) => b.size - a.size)
-    .slice(0, maxPieces)
-    .map(({ id }) => id);
+  // Paper is smooth; printed pieces are not. Local roughness marks piece
+  // pixels even where their colour happens to match the paper.
+  const rough = roughness(d, W, H);
+
+  const separate = (bg: RGB) => {
+    const [mr, mg, mb] = bg;
+    const dist = new Float32Array(N);
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < N; i++) {
+      const r = d[i * 4];
+      const g = d[i * 4 + 1];
+      const b = d[i * 4 + 2];
+      const dr = r - mr;
+      const dg = g - mg;
+      const db = b - mb;
+      const colour = isShadow(r, g, b, mr, mg, mb) ? 0 : Math.sqrt(dr * dr + dg * dg + db * db);
+      const v = Math.min(255, Math.max(colour, rough[i]));
+      dist[i] = v;
+      hist[v | 0]++;
+    }
+    const thr = pieceThreshold(hist, N, cutoff);
+    return { bg, thr, ...labelBlobs(dist, W, H, thr) };
+  };
+
+  // The frame is background when one piece fills the photo. With many pieces,
+  // the frame can mislead: the table shows around a sheet that does not fill
+  // the frame, or uneven lighting makes the sheet's bright middle differ from
+  // its dark edges. Either way the sheet comes out as one blob that dwarfs the
+  // pieces, and that blob's own colour is the real background.
+  let sep = separate(frameColour(d, frameIndices(W, H)));
+  let retried = false;
+  if (maxPieces > 1) {
+    let biggest = 0;
+    for (let id = 1; id < sep.sizes.length; id++) if (sep.sizes[id] > sep.sizes[biggest]) biggest = id;
+    const others = sep.sizes.filter((size, id) => id > 0 && id !== biggest && size >= N * 0.0005);
+    const typical = others.length ? median(others) : 0;
+    const dwarfs = sep.sizes[biggest] > N * 0.05 && sep.sizes[biggest] > 8 * typical;
+    if (biggest && (spansFrame(sep.boxes[biggest]) || dwarfs)) {
+      sep = separate(blobColour(d, sep.label, biggest, N));
+      retried = true;
+    }
+  }
+  const { label, sizes, boxes, thr } = sep;
+  // A blob spanning most of the frame is the table or the sheet's edge, not a piece.
+  const spans = (id: number) => spansFrame(boxes[id]);
+  let candidates = sizes.map((size, id) => ({ size, id })).filter(({ id, size }) => id > 0 && size >= N * 0.0005 && !(maxPieces > 1 && spans(id)));
+  if (!candidates.length) return [];
+  candidates.sort((a, b) => b.size - a.size);
+  if (maxPieces > 1) {
+    // Pieces from one puzzle are much the same size: judge against the typical
+    // candidate rather than the largest, so one big shadow does not hide them.
+    const typical = median(candidates.slice(0, 40).map((c) => c.size));
+    candidates = candidates.filter((c) => c.size >= typical * minRelSize && c.size <= typical * 4);
+  } else {
+    candidates = candidates.filter((c) => c.size >= candidates[0].size * minRelSize);
+  }
+  const ids = candidates.slice(0, maxPieces).map(({ id }) => id);
+  opts.debug?.({
+    work: `${W}x${H}`, background: sep.bg.map(Math.round), retried, thr: Math.round(thr), blobs: sizes.length - 1,
+    largest: sizes.map((size, id) => ({ id, size })).filter((x) => x.id).sort((a, b) => b.size - a.size).slice(0, 6).map((x) => `${x.size}${spans(x.id) ? "*" : ""}`),
+    kept: ids.length,
+  });
 
   const scratch = { outside: new Uint8Array(N), stack: new Int32Array(N) };
   const pieces: PieceCut[] = [];

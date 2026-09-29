@@ -23,7 +23,9 @@ plain paper and photograph them together. Every piece is cut out and numbered; u
 not pieces. Optionally photograph the partly finished puzzle and crop it to the puzzle's outer
 frame: the pieces are then marked on that photo, and spots that already look filled are ruled out.
 Each piece gets a row, a column, a turn hint and a confidence, and no two pieces are given the same
-cell.
+cell. Plain pieces (sky, water) are flagged as guesses: nothing can place those from their picture
+alone. Fine, repetitive texture such as foliage is the hardest case; a sharp, glare-free box photo
+and the puzzle photo (which rules out every filled spot) help most.
 
 Everything is saved in the browser as you go. Close the tab and reopen the app and you are back
 where you were, with the key, the grid, the last piece and its result. The **Puzzles** button lists
@@ -35,9 +37,9 @@ All image processing is plain canvas pixel work in [`src/lib`](src/lib):
 
 | Module | What it does |
 | --- | --- |
-| `segment.ts` | Reads the background colour from the photo's frame, thresholds by colour distance (Otsu, capped by the background's own spread so pale piece regions survive), treats paper-coloured shadow pixels as background, labels every blob, fills holes, erodes the bevelled rim and straightens each piece using the peak of its edge-direction histogram. One piece or many from the same code. |
-| `match.ts` | Slides the cut-out over a small copy of the key at every position, in four turns and three sizes, scoring zero-mean colour correlation minus a colour-drift penalty. The strongest peaks are re-scored on a 3× finer copy and the top three distinct spots are returned. |
-| `batch.ts`, `board.ts` | Placing many pieces: each is matched against the key, the board photo (cropped to the puzzle frame, so it shares the key's coordinates) demotes spots that already look filled, and cells are handed out greedily so two pieces never claim the same one. |
+| `segment.ts` | Separates pieces from the background. The background colour comes from the photo's frame, or, when the sheet does not fill the frame and shows up as one huge blob, from that sheet. Pixels count as piece by colour distance (Otsu, capped by the background's own spread so pale regions survive) or by local roughness (paper is smooth, print is not); paper-coloured shadow pixels count as background. Blobs are labelled, frame-spanning and odd-sized ones dropped, holes filled, the bevelled rim eroded, and each piece straightened using the peak of its edge-direction histogram. One piece or many from the same code. |
+| `match.ts` | Both photos are high-passed (local mean removed) so vignetting, glossy highlights and colour casts drop out. Pass 1 slides the cut-out over a small copy of the key at every position, in four turns and three sizes, scoring zero-mean correlation minus a hue penalty. Pass 2 re-scores the strongest peaks on a 3× finer copy, nudging position, size and tilt; pass 3 re-scores the finalists near the key's own resolution. Positions are the cut-out's centroid. Each match carries a texture measure so plain pieces can be flagged. |
+| `batch.ts`, `board.ts` | Placing many pieces: the board photo (cropped to the puzzle frame) is aligned to the key by shift and scale, each cell is judged filled or empty from structure and colour, and the search is confined to the empty cells. Cells are handed out greedily by confidence so two pieces never claim the same one. |
 | `grid.ts` | Derives pieces across / down from the piece count and the key's aspect ratio, and maps a match to a row and column. |
 | `verdict.ts` | Turns the top scores into "Strong match", "Likely match" or "Several spots look alike". |
 | `canvas.ts`, `stats.ts`, `draw.ts` | Canvas helpers, DOM-free numerics (median, Otsu) and the result-view drawing. |

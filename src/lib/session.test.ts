@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { describeSession, hasContent, hasResult, newSession, normaliseSession, relativeTime, resumeStep } from "./session";
 
 const blob = new Blob(["x"]);
-const match = { u: 0.5, v: 0.5, rot: 0, score: 0.9 };
+const match = { u: 0.5, v: 0.5, rot: 0, score: 0.9, texture: 20 };
 
 describe("newSession", () => {
   test("starts empty on the key step with sensible defaults", () => {

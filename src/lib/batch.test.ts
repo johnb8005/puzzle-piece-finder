@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { applyOccupancy, assignCells, type Placement } from "./batch";
 
 const grid = { cols: 10, rows: 10 };
-const at = (col: number, row: number, score: number) => ({ u: (col - 0.5) / 10, v: (row - 0.5) / 10, rot: 0, score });
+const at = (col: number, row: number, score: number) => ({ u: (col - 0.5) / 10, v: (row - 0.5) / 10, rot: 0, score, texture: 20 });
 const place = (index: number, ...options: ReturnType<typeof at>[]): Placement => ({ index, options, chosen: -1, filled: null });
 
 describe("assignCells", () => {
