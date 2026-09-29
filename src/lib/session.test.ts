@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { describeSession, hasContent, newSession, relativeTime, resumeStep } from "./session";
+import { describeSession, hasContent, hasResult, newSession, normaliseSession, relativeTime, resumeStep } from "./session";
 
 const blob = new Blob(["x"]);
 const match = { u: 0.5, v: 0.5, rot: 0, score: 0.9 };
@@ -17,19 +17,45 @@ describe("newSession", () => {
   });
 });
 
+const single = { mode: "single" as const, placements: null };
+const placement = { index: 0, options: [match], chosen: 0, filled: null };
+
 describe("resumeStep", () => {
   test("falls back to the key step without a saved key", () => {
-    expect(resumeStep({ key: null, results: [match], step: "result" })).toBe("key");
+    expect(resumeStep({ ...single, key: null, results: [match], step: "result" })).toBe("key");
   });
   test("returns to the piece step when results are missing", () => {
-    expect(resumeStep({ key: blob, results: null, step: "result" })).toBe("piece");
-    expect(resumeStep({ key: blob, results: [], step: "result" })).toBe("piece");
+    expect(resumeStep({ ...single, key: blob, results: null, step: "result" })).toBe("piece");
+    expect(resumeStep({ ...single, key: blob, results: [], step: "result" })).toBe("piece");
   });
   test("returns to the result step when everything is there", () => {
-    expect(resumeStep({ key: blob, results: [match], step: "result" })).toBe("result");
+    expect(resumeStep({ ...single, key: blob, results: [match], step: "result" })).toBe("result");
   });
   test("never skips ahead of where the user was", () => {
-    expect(resumeStep({ key: blob, results: [match], step: "key" })).toBe("key");
+    expect(resumeStep({ ...single, key: blob, results: [match], step: "key" })).toBe("key");
+  });
+  test("in batch mode the placements decide, not the single result", () => {
+    expect(resumeStep({ mode: "batch", placements: null, key: blob, results: [match], step: "result" })).toBe("piece");
+    expect(resumeStep({ mode: "batch", placements: [placement], key: blob, results: null, step: "result" })).toBe("result");
+  });
+});
+
+describe("hasResult", () => {
+  test("follows the mode", () => {
+    expect(hasResult({ mode: "single", results: [match], placements: null })).toBe(true);
+    expect(hasResult({ mode: "single", results: null, placements: [placement] })).toBe(false);
+    expect(hasResult({ mode: "batch", results: null, placements: [placement] })).toBe(true);
+  });
+});
+
+describe("normaliseSession", () => {
+  test("fills fields missing from records saved by older versions", () => {
+    const rec = normaliseSession({ id: "old", createdAt: 5, key: blob, results: [match], step: "result" } as never);
+    expect(rec.mode).toBe("single");
+    expect(rec.placements).toBeNull();
+    expect(rec.excluded).toEqual([]);
+    expect(rec.key).toBe(blob);
+    expect(rec.createdAt).toBe(5);
   });
 });
 
@@ -50,6 +76,12 @@ describe("describeSession", () => {
   test("notes a placed piece", () => {
     expect(describeSession({ count: 500, grid: { cols: 25, rows: 20 }, key: blob, results: [match], updatedAt: now }, now)).toBe(
       "25 × 20 · piece placed · just now",
+    );
+  });
+  test("counts placed pieces in batch mode", () => {
+    const placements = [placement, { ...placement, index: 1, chosen: -1 }, { ...placement, index: 2 }];
+    expect(describeSession({ count: 500, grid: { cols: 25, rows: 20 }, key: blob, results: null, placements, updatedAt: now }, now)).toBe(
+      "25 × 20 · 2 pieces placed · just now",
     );
   });
   test("says when the key is not saved yet", () => {
