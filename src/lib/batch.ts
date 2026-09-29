@@ -4,9 +4,9 @@
  * out greedily so two pieces never claim the same one.
  */
 import type { Occupancy } from "./board";
-import { FILLED_THRESHOLD } from "./board";
+import { emptyCells, FILLED_THRESHOLD } from "./board";
 import { cellOf, type Grid } from "./grid";
-import { findPiece, MatchCancelled, type KeyCache, type Match } from "./match";
+import { findPiece, MatchCancelled, type KeyCache, type Match, type SearchOptions } from "./match";
 
 export interface Placement {
   /** Index into the pieces list. */
@@ -28,8 +28,11 @@ export interface PlacePiecesOptions {
   grid: Grid;
   cache: KeyCache;
   occupancy: Occupancy | null;
+  /** Whether the board was aligned well enough to trust cell boundaries. */
+  aligned?: boolean;
   onProgress: (done: number, total: number, fraction: number) => void;
   isCancelled: () => boolean;
+  search?: SearchOptions;
 }
 
 /**
@@ -65,9 +68,19 @@ export function applyOccupancy(options: Match[], occupancy: Occupancy | null): {
   return { options: scored.map((s) => s.m), filled: scored.map((s) => s.f) };
 }
 
-export async function placePieces({ keyCanvas, pieces, grid, cache, occupancy, onProgress, isCancelled }: PlacePiecesOptions): Promise<Placement[]> {
+export async function placePieces({ keyCanvas, pieces, grid, cache, occupancy, aligned = true, onProgress, isCancelled, search = {} }: PlacePiecesOptions): Promise<Placement[]> {
   const placements: Placement[] = [];
   const filledAt = new Map<number, number[]>();
+  // With a board, only cells that still look empty are searched at all. When
+  // the board is aligned the piece may sit a little over a cell's edge; when
+  // it is not, whole neighbouring cells are allowed too.
+  let allowedCell: SearchOptions["allowedCell"];
+  const cellMargin = aligned ? 0.3 : 0;
+  if (occupancy) {
+    const empty = emptyCells(occupancy, grid, !aligned);
+    const anyEmpty = empty.some((row) => row.some(Boolean));
+    if (anyEmpty) allowedCell = (col, row) => empty[row - 1]?.[col - 1] ?? true;
+  }
   for (let i = 0; i < pieces.length; i++) {
     const { index, canvas } = pieces[i];
     onProgress(i, pieces.length, i / pieces.length);
@@ -80,6 +93,7 @@ export async function placePieces({ keyCanvas, pieces, grid, cache, occupancy, o
         cache,
         onProgress: (p) => onProgress(i, pieces.length, (i + p) / pieces.length),
         isCancelled,
+        search: { ...search, allowedCell, rows: grid.rows, cellMargin },
       });
     } catch (e) {
       if (e instanceof MatchCancelled) throw e;

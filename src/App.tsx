@@ -5,7 +5,7 @@ import { ModeToggle } from "./components/ModeToggle";
 import { Note } from "./components/Note";
 import { StepTabs } from "./components/StepTabs";
 import { placePieces, type Placement } from "./lib/batch";
-import { boardOccupancy } from "./lib/board";
+import { alignBoard, ALIGNMENT_OK, boardOccupancy } from "./lib/board";
 import { canvasToBlob, ctx2d, fileToCanvas, makeCanvas, resizeCanvas, thumbnail } from "./lib/canvas";
 import { deleteSession, getCurrentSessionId, listSessions, loadSession, saveSession, setCurrentSessionId } from "./lib/db";
 import { autoGrid, type Grid } from "./lib/grid";
@@ -90,6 +90,7 @@ export default function App() {
   const [boardCrop, setBoardCrop] = useState<Crop>(FULL);
   const [boardCropUrl, setBoardCropUrl] = useState("");
   const [placements, setPlacements] = useState<Placement[] | null>(null);
+  const [boardIgnored, setBoardIgnored] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
   const [batchSel, setBatchSel] = useState(0);
 
@@ -447,13 +448,17 @@ export default function App() {
     setBatchProgress({ done: 0, total: pieces.length, fraction: 0 });
     try {
       const board = boardUrl ? cropBoard(boardCrop) : null;
-      const occupancy = board ? boardOccupancy(board, keyCanvas.current, grid) : null;
+      const alignment = board ? alignBoard(board, keyCanvas.current, grid) : null;
+      const usable = !!alignment && alignment.score >= ALIGNMENT_OK;
+      setBoardIgnored(!!board && !usable);
+      const occupancy = board && usable ? boardOccupancy(board, keyCanvas.current, grid, alignment) : null;
       const placed = await placePieces({
         keyCanvas: keyCanvas.current,
         pieces,
         grid,
         cache: cache.current,
         occupancy,
+        aligned: usable,
         onProgress: (done, total, fraction) => { if (runId.current === id) setBatchProgress({ done, total, fraction }); },
         isCancelled: () => runId.current !== id,
       });
@@ -589,6 +594,7 @@ export default function App() {
             {step === "result" && mode === "batch" && placements && placements.length > 0 && grid && keyCanvas.current && (
               <BatchResultStep
                 placements={placements}
+                boardIgnored={boardIgnored}
                 pieces={pieceCuts}
                 grid={grid}
                 keyUrl={keyUrl}

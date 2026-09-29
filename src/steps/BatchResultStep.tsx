@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { Note } from "../components/Note";
 import type { Placement } from "../lib/batch";
 import { FILLED_THRESHOLD } from "../lib/board";
+import { isPlain } from "../lib/match";
 import { clamp } from "../lib/canvas";
 import { drawTurned, drawZoom } from "../lib/draw";
 import { cellOf, type Grid } from "../lib/grid";
@@ -11,6 +12,8 @@ import { caption, FONT, hint, P, primaryBtn, quietBtn } from "../theme";
 
 interface Props {
   placements: Placement[];
+  /** Set when a board photo was given but could not be lined up with the key. */
+  boardIgnored?: boolean;
   pieces: { canvas: HTMLCanvasElement; thumbUrl: string }[];
   grid: Grid;
   keyUrl: string;
@@ -24,7 +27,7 @@ interface Props {
 }
 
 /** Step 3, many pieces: every piece marked on the puzzle, with details for the selected one. */
-export function BatchResultStep({ placements, pieces, grid, keyUrl, keyCanvas, boardUrl, sel, setSel, onMore, onAdjust }: Props) {
+export function BatchResultStep({ placements, boardIgnored, pieces, grid, keyUrl, keyCanvas, boardUrl, sel, setSel, onMore, onAdjust }: Props) {
   const zoomRef = useRef<HTMLCanvasElement>(null);
   const turnRef = useRef<HTMLCanvasElement>(null);
   const current = placements[sel] ?? placements[0];
@@ -50,6 +53,10 @@ export function BatchResultStep({ placements, pieces, grid, keyUrl, keyCanvas, b
           Numbers match the pieces photo. Tap a number on the {boardUrl ? "puzzle" : "key"} or in the list below to see where it goes.
         </p>
       </div>
+
+      {boardIgnored && (
+        <Note>Your puzzle photo could not be lined up with the key, so it was not used. Check that its crop follows the finished puzzle's edges.</Note>
+      )}
 
       <div className="relative overflow-hidden" style={{ borderRadius: 12 }}>
         <img src={boardUrl || keyUrl} alt={boardUrl ? "Your puzzle so far with the pieces marked" : "The puzzle key with the pieces marked"} className="block w-full" />
@@ -93,7 +100,9 @@ export function BatchResultStep({ placements, pieces, grid, keyUrl, keyCanvas, b
                   <figcaption style={caption}>Turn it to sit like this</figcaption>
                 </figure>
               </div>
-              {verdict?.weak ? (
+              {isPlain(match) ? (
+                <Note>This piece is nearly plain, so its spot is a guess. Plain sky or water looks the same in many places.</Note>
+              ) : verdict?.weak ? (
                 <Note>{verdict.label}. This piece could belong in more than one spot; check it against the close-up.</Note>
               ) : (
                 <div style={{ fontSize: 15, fontWeight: 700, color: P.mark }}>{verdict?.label}</div>
@@ -135,7 +144,8 @@ export function BatchResultStep({ placements, pieces, grid, keyUrl, keyCanvas, b
                     <>
                       <span style={{ display: "block", fontWeight: 700 }}>Row {c.row}, column {c.col}</span>
                       <span style={{ display: "block", fontSize: 12, opacity: 0.75, fontWeight: 500 }}>
-                        {Math.round(clamp(m!.score, 0, 1) * 100)}% alike{m!.rot ? ` · turn ${m!.rot === 2 ? "half" : m!.rot === 1 ? "¼ right" : "¼ left"}` : ""}
+                        {isPlain(m!) ? "plain piece, a guess" : `${Math.round(clamp(m!.score, 0, 1) * 100)}% alike`}
+                        {m!.rot ? ` · turn ${m!.rot === 2 ? "half" : m!.rot === 1 ? "¼ right" : "¼ left"}` : ""}
                       </span>
                     </>
                   ) : (

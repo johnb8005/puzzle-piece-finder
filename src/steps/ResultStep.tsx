@@ -4,7 +4,7 @@ import { Note } from "../components/Note";
 import { clamp } from "../lib/canvas";
 import { drawTurned, drawZoom } from "../lib/draw";
 import { cellOf, type Grid } from "../lib/grid";
-import type { Match } from "../lib/match";
+import { isPlain, type Match } from "../lib/match";
 import { verdictFor } from "../lib/verdict";
 import { caption, FONT, hint, P, primaryBtn, quietBtn } from "../theme";
 
@@ -105,7 +105,11 @@ export function ResultStep({ results, sel, setSel, grid, keyUrl, keyCanvas, piec
         </figure>
       </div>
 
+      {isPlain(cur) && (
+        <Note>This piece is nearly plain, so its spot is a guess. Plain sky or water looks the same in many places.</Note>
+      )}
       {verdict &&
+        !isPlain(cur) &&
         (verdict.weak ? (
           <Note>{verdict.label}. Pieces of sky, water or other flat colour match many places — compare the numbered options below against your piece.</Note>
         ) : (
