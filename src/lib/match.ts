@@ -51,6 +51,11 @@ interface Template {
   /** Total sum of squares of the zero-mean template, for normalisation. */
   tss: number;
   rot: number;
+  /** Centroid of the opaque pixels, relative to the template's top-left. A tab
+   *  on one side pulls the bounding box but barely moves the centroid, so this
+   *  is where the piece's body actually sits. */
+  cx: number;
+  cy: number;
 }
 
 export class MatchCancelled extends Error {
@@ -102,6 +107,8 @@ function buildTemplate(piece: HTMLCanvasElement, rot: number, longSide: number, 
   const R: number[] = [];
   const G: number[] = [];
   const B: number[] = [];
+  let sx = 0;
+  let sy = 0;
   for (let y = 0; y < ch; y++)
     for (let x = 0; x < cw; x++) {
       const i = (y * cw + x) * 4;
@@ -110,6 +117,8 @@ function buildTemplate(piece: HTMLCanvasElement, rot: number, longSide: number, 
         R.push(d[i]);
         G.push(d[i + 1]);
         B.push(d[i + 2]);
+        sx += x + 0.5;
+        sy += y + 0.5;
       }
     }
   const n = off.length;
@@ -127,7 +136,7 @@ function buildTemplate(piece: HTMLCanvasElement, rot: number, longSide: number, 
     b[i] = B[i] - mb;
     tss += r[i] * r[i] + g[i] * g[i] + b[i] * b[i];
   }
-  return { w: cw, h: ch, n, off: Int32Array.from(off), r, g, b, mr, mg, mb, tss, rot };
+  return { w: cw, h: ch, n, off: Int32Array.from(off), r, g, b, mr, mg, mb, tss, rot, cx: sx / n, cy: sy / n };
 }
 
 /** Pattern agreement (zero-mean correlation) minus a penalty for colour drift. */
@@ -259,7 +268,7 @@ export async function findPiece({ keyCanvas, piece, cols, cache, onProgress, isC
           const x = fx - hx + ox;
           if (x < 0 || x + t.w > KF.W) continue;
           const s = scoreAt(KF, t, y * KF.W + x);
-          if (!top || s > top.score) top = { score: s, cx: x + t.w / 2, cy: y + t.h / 2, rot: pk.combo.rot };
+          if (!top || s > top.score) top = { score: s, cx: x + t.cx, cy: y + t.cy, rot: pk.combo.rot };
         }
       }
     }

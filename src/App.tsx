@@ -1,14 +1,19 @@
 import { FolderOpen } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Library } from "./components/Library";
+import { ModeToggle } from "./components/ModeToggle";
 import { Note } from "./components/Note";
 import { StepTabs } from "./components/StepTabs";
-import { canvasToBlob, ctx2d, fileToCanvas, makeCanvas, thumbnail } from "./lib/canvas";
+import { placePieces, type Placement } from "./lib/batch";
+import { boardOccupancy } from "./lib/board";
+import { canvasToBlob, ctx2d, fileToCanvas, makeCanvas, resizeCanvas, thumbnail } from "./lib/canvas";
 import { deleteSession, getCurrentSessionId, listSessions, loadSession, saveSession, setCurrentSessionId } from "./lib/db";
 import { autoGrid, type Grid } from "./lib/grid";
 import { findPiece, MatchCancelled, type KeyCache, type Match } from "./lib/match";
-import { segmentPiece } from "./lib/segment";
-import { hasContent, newSession, resumeStep, type SessionRecord } from "./lib/session";
+import { segmentPiece, segmentPieces, type PieceCut } from "./lib/segment";
+import { hasContent, hasResult, newSession, normaliseSession, resumeStep, type Mode, type SessionRecord } from "./lib/session";
+import { BatchResultStep } from "./steps/BatchResultStep";
+import { BatchStep, type BatchProgress } from "./steps/BatchStep";
 import { KeyStep } from "./steps/KeyStep";
 import { PieceStep } from "./steps/PieceStep";
 import { ResultStep } from "./steps/ResultStep";
@@ -17,9 +22,22 @@ import type { Crop, Step } from "./types";
 
 const KEY_MAX_SIDE = 1600;
 const PIECE_MAX_SIDE = 1200;
+const PIECES_MAX_SIDE = 1800;
+const BOARD_MAX_SIDE = 1600;
 const SAVE_DEBOUNCE_MS = 400;
+const FULL: Crop = { x: 0, y: 0, w: 1, h: 1 };
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+interface CutPiece extends PieceCut {
+  thumbUrl: string;
+}
+
+function cropCanvas(src: HTMLCanvasElement, crop: Crop): HTMLCanvasElement {
+  const c = makeCanvas(crop.w * src.width, crop.h * src.height);
+  ctx2d(c).drawImage(src, crop.x * src.width, crop.y * src.height, crop.w * src.width, crop.h * src.height, 0, 0, c.width, c.height);
+  return c;
+}
 
 export default function App() {
   const [step, setStep] = useState<Step>("key");
@@ -31,6 +49,8 @@ export default function App() {
   const rawKeyBlob = useRef<Blob | null>(null);
   const keyBlob = useRef<Blob | null>(null);
   const pieceBlob = useRef<Blob | null>(null);
+  const piecesBlob = useRef<Blob | null>(null);
+  const boardBlob = useRef<Blob | null>(null);
   const thumb = useRef("");
   const [hydrated, setHydrated] = useState(false);
   const [library, setLibrary] = useState(false);
@@ -41,13 +61,14 @@ export default function App() {
   const keyCanvas = useRef<HTMLCanvasElement | null>(null);
   const [rawKeyUrl, setRawKeyUrl] = useState("");
   const [keyUrl, setKeyUrl] = useState("");
-  const [crop, setCrop] = useState<Crop>(session.current.crop);
-  const [count, setCount] = useState(session.current.count);
+  const [crop, setCrop] = useState<Crop>(FULL);
+  const [count, setCount] = useState(500);
   const [manual, setManual] = useState<Grid | null>(null);
   const [rawSize, setRawSize] = useState({ w: 4, h: 3 });
   const [grid, setGrid] = useState<Grid | null>(null);
 
-  // Step 2: the piece
+  // Step 2: one piece
+  const [mode, setMode] = useState<Mode>("single");
   const pieceSrc = useRef<HTMLCanvasElement | null>(null);
   const pieceCut = useRef<HTMLCanvasElement | null>(null);
   const [pieceUrl, setPieceUrl] = useState("");
@@ -55,6 +76,22 @@ export default function App() {
   const [cutArea, setCutArea] = useState(0);
   const [cutoff, setCutoff] = useState(1);
   const [straighten, setStraighten] = useState(true);
+
+  // Step 2: many pieces
+  const piecesSrc = useRef<HTMLCanvasElement | null>(null);
+  const [piecesUrl, setPiecesUrl] = useState("");
+  const [pieceCuts, setPieceCuts] = useState<CutPiece[]>([]);
+  const [excluded, setExcluded] = useState<ReadonlySet<number>>(new Set());
+  const [batchCutoff, setBatchCutoffState] = useState(1);
+  const [batchStraighten, setBatchStraightenState] = useState(true);
+  const boardSrc = useRef<HTMLCanvasElement | null>(null);
+  const boardCanvas = useRef<HTMLCanvasElement | null>(null);
+  const [boardUrl, setBoardUrl] = useState("");
+  const [boardCrop, setBoardCrop] = useState<Crop>(FULL);
+  const [boardCropUrl, setBoardCropUrl] = useState("");
+  const [placements, setPlacements] = useState<Placement[] | null>(null);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+  const [batchSel, setBatchSel] = useState(0);
 
   // Step 3: the match
   const cache = useRef<KeyCache>({});
@@ -69,6 +106,20 @@ export default function App() {
   const cancelMatch = useCallback(() => {
     runId.current++;
     setProgress(null);
+    setBatchProgress(null);
+  }, []);
+
+  /** The board photo cropped to the puzzle frame, for display and occupancy checks. */
+  const cropBoard = useCallback((c: Crop) => {
+    if (!boardSrc.current) {
+      boardCanvas.current = null;
+      setBoardCropUrl("");
+      return null;
+    }
+    const cropped = cropCanvas(boardSrc.current, c);
+    boardCanvas.current = cropped;
+    setBoardCropUrl(cropped.toDataURL("image/jpeg", 0.85));
+    return cropped;
   }, []);
 
   /** Replace all working state with a session record, decoding its photos. */
@@ -87,40 +138,51 @@ export default function App() {
     setStraighten(rec.straighten);
     setResults(rec.results);
     setSel(rec.sel);
+    setMode(rec.mode);
+    setBatchCutoffState(rec.batchCutoff);
+    setBatchStraightenState(rec.batchStraighten);
+    setExcluded(new Set(rec.excluded));
+    setBoardCrop(rec.boardCrop);
+    setPlacements(rec.placements);
+    setBatchSel(rec.batchSel);
+
+    const decode = async (blob: Blob | null, maxSide: number) => (blob ? fileToCanvas(blob, maxSide) : null);
 
     rawKeyBlob.current = rec.rawKey;
-    if (rec.rawKey) {
-      const c = await fileToCanvas(rec.rawKey, KEY_MAX_SIDE);
-      rawKey.current = c;
-      setRawSize({ w: c.width, h: c.height });
-      setRawKeyUrl(c.toDataURL("image/jpeg", 0.85));
-    } else {
-      rawKey.current = null;
-      setRawKeyUrl("");
-    }
+    const raw = await decode(rec.rawKey, KEY_MAX_SIDE);
+    rawKey.current = raw;
+    if (raw) setRawSize({ w: raw.width, h: raw.height });
+    setRawKeyUrl(raw ? raw.toDataURL("image/jpeg", 0.85) : "");
+
     keyBlob.current = rec.key;
-    if (rec.key) {
-      const c = await fileToCanvas(rec.key, KEY_MAX_SIDE);
-      keyCanvas.current = c;
-      setKeyUrl(c.toDataURL("image/jpeg", 0.85));
-    } else {
-      keyCanvas.current = null;
-      setKeyUrl("");
-    }
+    const key = await decode(rec.key, KEY_MAX_SIDE);
+    keyCanvas.current = key;
+    setKeyUrl(key ? key.toDataURL("image/jpeg", 0.85) : "");
+
     pieceBlob.current = rec.piece;
-    if (rec.piece) {
-      const c = await fileToCanvas(rec.piece, PIECE_MAX_SIDE);
-      pieceSrc.current = c;
-      setPieceUrl(c.toDataURL("image/jpeg", 0.8));
-    } else {
-      pieceSrc.current = null;
+    const piece = await decode(rec.piece, PIECE_MAX_SIDE);
+    pieceSrc.current = piece;
+    if (!piece) {
       pieceCut.current = null;
-      setPieceUrl("");
       setCutUrl("");
     }
+    setPieceUrl(piece ? piece.toDataURL("image/jpeg", 0.8) : "");
+
+    piecesBlob.current = rec.piecesPhoto;
+    const pieces = await decode(rec.piecesPhoto, PIECES_MAX_SIDE);
+    piecesSrc.current = pieces;
+    if (!pieces) setPieceCuts([]);
+    setPiecesUrl(pieces ? pieces.toDataURL("image/jpeg", 0.8) : "");
+
+    boardBlob.current = rec.board;
+    const board = await decode(rec.board, BOARD_MAX_SIDE);
+    boardSrc.current = board;
+    setBoardUrl(board ? board.toDataURL("image/jpeg", 0.8) : "");
+    cropBoard(rec.boardCrop);
+
     setStep(resumeStep(rec));
     setHydrated(true);
-  }, [cancelMatch]);
+  }, [cancelMatch, cropBoard]);
 
   // Boot: restore the session that was open last time, if any.
   const booted = useRef(false);
@@ -131,7 +193,7 @@ export default function App() {
       const id = getCurrentSessionId();
       const rec = id ? await loadSession(id) : null;
       try {
-        await applySession(rec ?? newSession());
+        await applySession(rec ? normaliseSession(rec) : newSession());
       } catch {
         await applySession(newSession());
       }
@@ -159,6 +221,15 @@ export default function App() {
         results,
         sel,
         step,
+        mode,
+        piecesPhoto: piecesUrl ? piecesBlob.current : null,
+        batchCutoff,
+        batchStraighten,
+        excluded: [...excluded],
+        board: boardUrl ? boardBlob.current : null,
+        boardCrop,
+        placements,
+        batchSel,
       };
       if (!hasContent(rec)) return;
       session.current = rec;
@@ -168,7 +239,7 @@ export default function App() {
       }
     }, SAVE_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [hydrated, rawKeyUrl, crop, count, manual, keyUrl, grid, pieceUrl, cutoff, straighten, results, sel, step]);
+  }, [hydrated, rawKeyUrl, crop, count, manual, keyUrl, grid, pieceUrl, cutoff, straighten, results, sel, step, mode, piecesUrl, batchCutoff, batchStraighten, excluded, boardUrl, boardCrop, placements, batchSel]);
 
   const openLibrary = async () => {
     setSessions(await listSessions());
@@ -193,7 +264,7 @@ export default function App() {
       return;
     }
     setCurrentSessionId(rec.id);
-    await applySession(rec);
+    await applySession(normaliseSession(rec));
     setLibrary(false);
   };
 
@@ -205,6 +276,7 @@ export default function App() {
     if (id === session.current.id) await resetToNew();
   };
 
+  // ---------------------------------------------------------------- step 1
   const loadKey = async (file: File) => {
     setError("");
     try {
@@ -213,7 +285,7 @@ export default function App() {
       thumb.current = thumbnail(c);
       rawKey.current = c;
       setRawSize({ w: c.width, h: c.height });
-      setCrop({ x: 0, y: 0, w: 1, h: 1 });
+      setCrop(FULL);
       setManual(null);
       setRawKeyUrl(c.toDataURL("image/jpeg", 0.85));
     } catch (e) {
@@ -224,21 +296,19 @@ export default function App() {
   const saveKey = async () => {
     const src = rawKey.current;
     if (!src) return;
-    const sx = crop.x * src.width;
-    const sy = crop.y * src.height;
-    const sw = crop.w * src.width;
-    const sh = crop.h * src.height;
-    const c = makeCanvas(sw, sh);
-    ctx2d(c).drawImage(src, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const c = cropCanvas(src, crop);
     keyCanvas.current = c;
     keyBlob.current = await canvasToBlob(c);
     thumb.current = thumbnail(c);
+    cache.current = {};
     setKeyUrl(c.toDataURL("image/jpeg", 0.85));
     setGrid({ cols: draft.cols, rows: draft.rows });
     setResults(null);
+    setPlacements(null);
     setStep("piece");
   };
 
+  // ---------------------------------------------------------------- step 2: one piece
   const loadPiece = async (file: File) => {
     setError("");
     try {
@@ -294,8 +364,113 @@ export default function App() {
     setCutUrl("");
   };
 
+  // ---------------------------------------------------------------- step 2: many pieces
+  const loadPieces = async (file: File) => {
+    setError("");
+    try {
+      const c = await fileToCanvas(file, PIECES_MAX_SIDE);
+      piecesBlob.current = await canvasToBlob(c, "image/jpeg", 0.85);
+      piecesSrc.current = c;
+      setPlacements(null);
+      setExcluded(new Set());
+      setPiecesUrl(c.toDataURL("image/jpeg", 0.8));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  // Re-cut all pieces whenever the photo or the cut settings change.
+  useEffect(() => {
+    if (!piecesUrl || !piecesSrc.current) return;
+    const cuts = segmentPieces(piecesSrc.current, batchCutoff, batchStraighten);
+    setPieceCuts(
+      cuts.map((p) => {
+        const s = Math.min(1, 96 / Math.max(p.canvas.width, p.canvas.height));
+        return { ...p, thumbUrl: resizeCanvas(p.canvas, p.canvas.width * s, p.canvas.height * s).toDataURL("image/png") };
+      }),
+    );
+  }, [piecesUrl, batchCutoff, batchStraighten]);
+
+  // Changing the cut invalidates earlier placements; restoring a session does not.
+  const setBatchCutoff = (v: number) => { setBatchCutoffState(v); setPlacements(null); };
+  const setBatchStraighten = (v: boolean) => { setBatchStraightenState(v); setPlacements(null); };
+
+  const clearPieces = () => {
+    cancelMatch();
+    piecesBlob.current = null;
+    piecesSrc.current = null;
+    setPiecesUrl("");
+    setPieceCuts([]);
+    setExcluded(new Set());
+    setPlacements(null);
+  };
+
+  const togglePiece = (i: number) => {
+    setExcluded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+    setPlacements(null);
+  };
+
+  const loadBoard = async (file: File) => {
+    setError("");
+    try {
+      const c = await fileToCanvas(file, BOARD_MAX_SIDE);
+      boardBlob.current = await canvasToBlob(c, "image/jpeg", 0.85);
+      boardSrc.current = c;
+      setBoardCrop(FULL);
+      setBoardUrl(c.toDataURL("image/jpeg", 0.8));
+      setPlacements(null);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
+
+  const removeBoard = () => {
+    boardBlob.current = null;
+    boardSrc.current = null;
+    boardCanvas.current = null;
+    setBoardUrl("");
+    setBoardCropUrl("");
+    setPlacements(null);
+  };
+
+  const runBatch = async () => {
+    if (!keyCanvas.current || !grid) return;
+    const pieces = pieceCuts.map((p, index) => ({ index, canvas: p.canvas })).filter((p) => !excluded.has(p.index));
+    if (!pieces.length) return;
+    const id = ++runId.current;
+    setError("");
+    setBatchProgress({ done: 0, total: pieces.length, fraction: 0 });
+    try {
+      const board = boardUrl ? cropBoard(boardCrop) : null;
+      const occupancy = board ? boardOccupancy(board, keyCanvas.current, grid) : null;
+      const placed = await placePieces({
+        keyCanvas: keyCanvas.current,
+        pieces,
+        grid,
+        cache: cache.current,
+        occupancy,
+        onProgress: (done, total, fraction) => { if (runId.current === id) setBatchProgress({ done, total, fraction }); },
+        isCancelled: () => runId.current !== id,
+      });
+      if (runId.current !== id) return;
+      setPlacements(placed);
+      setBatchSel(Math.max(0, placed.findIndex((p) => p.chosen >= 0)));
+      setStep("result");
+    } catch (e) {
+      if (!(e instanceof MatchCancelled)) setError(errorMessage(e));
+    } finally {
+      if (runId.current === id) setBatchProgress(null);
+    }
+  };
+
   const cutProblem = !!pieceUrl && (!cutUrl || cutArea < 0.02 || cutArea > 0.85);
   const savedCount = sessions.length;
+  const showResult = hasResult({ mode, results, placements });
 
   return (
     <div style={{ minHeight: "100vh", background: P.felt, color: P.paper, fontFamily: FONT }}>
@@ -327,7 +502,7 @@ export default function App() {
           />
         ) : (
           <>
-            <StepTabs step={step} setStep={setStep} hasKey={!!keyUrl} hasResult={!!results} />
+            <StepTabs step={step} setStep={setStep} hasKey={!!keyUrl} hasResult={showResult} />
 
             {error && <Note>{error}</Note>}
 
@@ -352,23 +527,52 @@ export default function App() {
             )}
 
             {step === "piece" && (
-              <PieceStep
-                pieceUrl={pieceUrl}
-                cutUrl={cutUrl}
-                cutProblem={cutProblem}
-                cutoff={cutoff}
-                setCutoff={setCutoff}
-                straighten={straighten}
-                setStraighten={setStraighten}
-                progress={progress}
-                onLoad={loadPiece}
-                onRun={runMatch}
-                onCancel={cancelMatch}
-                onRetake={clearPiece}
-              />
+              <>
+                <ModeToggle mode={mode} setMode={(m) => { cancelMatch(); setMode(m); }} />
+                {mode === "single" ? (
+                  <PieceStep
+                    pieceUrl={pieceUrl}
+                    cutUrl={cutUrl}
+                    cutProblem={cutProblem}
+                    cutoff={cutoff}
+                    setCutoff={setCutoff}
+                    straighten={straighten}
+                    setStraighten={setStraighten}
+                    progress={progress}
+                    onLoad={loadPiece}
+                    onRun={runMatch}
+                    onCancel={cancelMatch}
+                    onRetake={clearPiece}
+                  />
+                ) : (
+                  grid && (
+                    <BatchStep
+                      piecesUrl={piecesUrl}
+                      pieces={pieceCuts}
+                      excluded={excluded}
+                      onToggle={togglePiece}
+                      cutoff={batchCutoff}
+                      setCutoff={setBatchCutoff}
+                      straighten={batchStraighten}
+                      setStraighten={setBatchStraighten}
+                      onLoadPieces={loadPieces}
+                      onRetakePieces={clearPieces}
+                      boardUrl={boardUrl}
+                      boardCrop={boardCrop}
+                      setBoardCrop={(c) => { setBoardCrop(c); setPlacements(null); }}
+                      grid={grid}
+                      onLoadBoard={loadBoard}
+                      onRemoveBoard={removeBoard}
+                      progress={batchProgress}
+                      onRun={runBatch}
+                      onCancel={cancelMatch}
+                    />
+                  )
+                )}
+              </>
             )}
 
-            {step === "result" && results && results.length > 0 && grid && keyCanvas.current && (
+            {step === "result" && mode === "single" && results && results.length > 0 && grid && keyCanvas.current && (
               <ResultStep
                 results={results}
                 sel={sel}
@@ -378,6 +582,21 @@ export default function App() {
                 keyCanvas={keyCanvas.current}
                 pieceCut={pieceCut.current}
                 onAnother={() => { clearPiece(); setResults(null); setStep("piece"); }}
+                onAdjust={() => setStep("piece")}
+              />
+            )}
+
+            {step === "result" && mode === "batch" && placements && placements.length > 0 && grid && keyCanvas.current && (
+              <BatchResultStep
+                placements={placements}
+                pieces={pieceCuts}
+                grid={grid}
+                keyUrl={keyUrl}
+                keyCanvas={keyCanvas.current}
+                boardUrl={boardUrl ? boardCropUrl : ""}
+                sel={batchSel}
+                setSel={setBatchSel}
+                onMore={() => { clearPieces(); setStep("piece"); }}
                 onAdjust={() => setStep("piece")}
               />
             )}

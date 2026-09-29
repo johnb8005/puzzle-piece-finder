@@ -18,6 +18,13 @@ Runs entirely in the browser: no server, no account, no uploads.
 3. **Place.** The app marks the spot on the key, shows a close-up, shows the piece turned the
    way it sits, and lists up to three candidate spots with a confidence verdict.
 
+**Many pieces at once.** On the Piece step, switch to *Many pieces*, spread the loose pieces on
+plain paper and photograph them together. Every piece is cut out and numbered; untick any that are
+not pieces. Optionally photograph the partly finished puzzle and crop it to the puzzle's outer
+frame: the pieces are then marked on that photo, and spots that already look filled are ruled out.
+Each piece gets a row, a column, a turn hint and a confidence, and no two pieces are given the same
+cell.
+
 Everything is saved in the browser as you go. Close the tab and reopen the app and you are back
 where you were, with the key, the grid, the last piece and its result. The **Puzzles** button lists
 every saved puzzle so you can switch between them or delete one.
@@ -28,8 +35,9 @@ All image processing is plain canvas pixel work in [`src/lib`](src/lib):
 
 | Module | What it does |
 | --- | --- |
-| `segment.ts` | Reads the background colour from the photo's frame, thresholds by colour distance (Otsu), keeps the largest blob, fills holes, erodes the bevelled rim and straightens the piece using the peak of its edge-direction histogram. |
+| `segment.ts` | Reads the background colour from the photo's frame, thresholds by colour distance (Otsu, capped by the background's own spread so pale piece regions survive), treats paper-coloured shadow pixels as background, labels every blob, fills holes, erodes the bevelled rim and straightens each piece using the peak of its edge-direction histogram. One piece or many from the same code. |
 | `match.ts` | Slides the cut-out over a small copy of the key at every position, in four turns and three sizes, scoring zero-mean colour correlation minus a colour-drift penalty. The strongest peaks are re-scored on a 3× finer copy and the top three distinct spots are returned. |
+| `batch.ts`, `board.ts` | Placing many pieces: each is matched against the key, the board photo (cropped to the puzzle frame, so it shares the key's coordinates) demotes spots that already look filled, and cells are handed out greedily so two pieces never claim the same one. |
 | `grid.ts` | Derives pieces across / down from the piece count and the key's aspect ratio, and maps a match to a row and column. |
 | `verdict.ts` | Turns the top scores into "Strong match", "Likely match" or "Several spots look alike". |
 | `canvas.ts`, `stats.ts`, `draw.ts` | Canvas helpers, DOM-free numerics (median, Otsu) and the result-view drawing. |
@@ -77,8 +85,8 @@ src/
   App.tsx             state and step orchestration
   theme.ts            palette, font and shared inline styles
   types.ts            Step and Crop types
-  components/         Note, PhotoButtons, StepTabs, CropBox, Library
-  steps/              KeyStep, PieceStep, ResultStep
+  components/         Note, PhotoButtons, StepTabs, CropBox, Library, ModeToggle, PieceGallery
+  steps/              KeyStep, PieceStep, ResultStep, BatchStep, BatchResultStep
   lib/                image processing (see above) and unit tests
   styles/             theme tokens, app CSS (Tailwind) and landing CSS
 public/               favicon and the demo GIF
